@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mood Capsule · 情绪胶囊</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-decor" aria-hidden="true">
+    <i class="bg-blob" style="left:-6%; top:-8%; width:340px; height:340px; background:#ffd3e0;"></i>
+    <i class="bg-blob" style="right:-5%; top:18%; width:300px; height:300px; background:#d6e5ff; animation-delay:-7s;"></i>
+    <i class="bg-blob" style="left:16%; bottom:-10%; width:320px; height:320px; background:#e3f6dc; animation-delay:-12s;"></i>
+    <i class="bg-blob" style="right:14%; bottom:-8%; width:280px; height:280px; background:#ffefc4; animation-delay:-5s;"></i>
+    <i class="bg-blob" style="left:44%; top:28%; width:240px; height:240px; background:#efe0ff; animation-delay:-10s;"></i>
+
+    <span class="f1" style="left:5%; top:10%; font-size:46px;">🧡</span>
+    <span class="f2" style="left:12%; top:72%; font-size:34px; animation-delay:-3s;">🌸</span>
+    <span class="f3" style="left:88%; top:16%; font-size:40px; animation-delay:-5s;">💛</span>
+    <span class="f1" style="left:82%; top:68%; font-size:30px; animation-delay:-7s;">🎀</span>
+    <span class="f3" style="left:20%; top:4%; font-size:26px; animation-delay:-2s;">✨</span>
+    <span class="f2" style="left:70%; top:88%; font-size:28px; animation-delay:-6s;">💊</span>
+    <span class="f1" style="left:44%; top:92%; font-size:24px; animation-delay:-4s;">⭐</span>
+    <span class="f3" style="left:92%; top:46%; font-size:26px; animation-delay:-8s;">🌷</span>
+    <span class="f2" style="left:2%; top:44%; font-size:28px; animation-delay:-9s;">💌</span>
+    <span class="f1" style="left:34%; top:50%; font-size:22px; animation-delay:-1s;">☁️</span>
+    <span class="f2" style="left:55%; top:6%; font-size:26px; animation-delay:-11s;">🌈</span>
+    <span class="f3" style="left:64%; top:58%; font-size:22px; animation-delay:-4s;">🦋</span>
+    <span class="f1" style="left:28%; top:34%; font-size:24px; animation-delay:-13s;">🍀</span>
+    <span class="f2" style="left:40%; top:80%; font-size:20px; animation-delay:-9s;">💫</span>
+  </div>
+  <div class="app">
+    <!-- ===================== 历史对话界面（默认） ===================== -->
+    <div id="historyView" class="view">
+      <header class="app-header">
+        <div class="logo">🧡</div>
+        <div class="title-block">
+          <h1>Mood Capsule</h1>
+          <p>情绪树洞 · 把每一次倾诉，收进一枚胶囊</p>
+        </div>
+        <div class="header-actions">
+          <button id="capsulePageBtn" class="btn-ghost" type="button">💊 我的胶囊</button>
+          <button id="startNewChatBtn" class="btn-accent" type="button">＋ 开始新对话</button>
+        </div>
+      </header>
+
+      <main class="history-layout">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>💬 历史对话</h2>
+          </div>
+          <div id="historyList" class="history-list"></div>
+          <p id="historyEmpty" class="empty-hint">还没有历史对话～<br />点击右上角「开始新对话」，和我聊聊吧。</p>
+        </section>
+      </main>
+    </div>
+
+    <!-- ===================== 我的胶囊列表界面 ===================== -->
+    <div id="capsuleView" class="view" hidden>
+      <header class="app-header">
+        <div class="logo">💊</div>
+        <div class="title-block">
+          <h1>我的情绪胶囊</h1>
+          <p>把每一次倾诉，收进一枚胶囊</p>
+        </div>
+        <button id="capsuleBackBtn" class="btn-ghost" type="button">← 历史对话</button>
+      </header>
+
+      <main class="capsule-layout">
+        <section class="capsule-panel">
+          <div class="capsule-header">
+            <h2>我的情绪胶囊</h2>
+            <span id="capsuleCount" class="badge">0</span>
+          </div>
+          <div id="capsuleList" class="capsule-list"></div>
+          <p id="capsuleEmpty" class="empty-hint">还没有胶囊哦～<br />聊完天点「结束对话 · 生成胶囊」，就会收获第一枚。</p>
+        </section>
+      </main>
+    </div>
+
+    <!-- ===================== 胶囊配色界面（结束对话后选色，先不揭晓胶囊） ===================== -->
+    <div id="previewView" class="view" hidden>
+      <header class="app-header">
+        <div class="logo">🎨</div>
+        <div class="title-block">
+          <h1>生成胶囊</h1>
+          <p>先为这枚情绪胶囊挑一个颜色吧</p>
+        </div>
+      </header>
+
+      <main class="preview-layout">
+        <section class="preview-panel color-pick-panel">
+          <div class="emotion-chip">
+            <span class="emotion-chip-label">你的情绪</span>
+            <span id="previewEmotion" class="emotion-chip-value"></span>
+          </div>
+          <p id="previewFarewell" class="preview-farewell" hidden></p>
+          <div class="color-bar">
+            <span class="color-label">🎨 胶囊颜色</span>
+            <div id="swatches" class="swatches-wrap"></div>
+            <input type="color" id="colorInput" value="#FF6B6B" title="自定义颜色" />
+          </div>
+          <div class="preview-actions">
+            <button id="previewCancelBtn" class="btn-ghost" type="button">返回对话</button>
+            <button id="previewSaveBtn" class="btn-primary" type="button">保存并查看胶囊</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ===================== 胶囊详情界面（选色后展示，独立于列表弹窗） ===================== -->
+    <div id="capsuleDetailView" class="view" hidden>
+      <header class="app-header">
+        <div class="logo">💊</div>
+        <div class="title-block">
+          <h1 id="capsuleDetailTitle">情绪胶囊</h1>
+          <p id="capsuleDetailSubtitle">这枚胶囊，收好了你的此刻</p>
+        </div>
+        <div class="header-actions">
+          <button id="capsuleDetailCapsulesBtn" class="btn-ghost" type="button">💊 我的胶囊</button>
+          <button id="capsuleDetailBackBtn" class="btn-ghost" type="button">← 历史对话</button>
+        </div>
+      </header>
+
+      <main class="capsule-detail-layout">
+        <section class="capsule-detail-panel">
+          <div id="capsuleDetailSvg" class="capsule-detail-svg"></div>
+          <div class="capsule-detail-info">
+            <h2 id="capsuleDetailEmotion"></h2>
+            <p id="capsuleDetailLevel" class="capsule-detail-level"></p>
+            <div class="detail-row"><span class="detail-key">主题颜色</span><span id="capsuleDetailColorSwatch" class="detail-swatch"></span><span id="capsuleDetailColor"></span></div>
+            <div class="detail-row"><span class="detail-key">情绪强度</span><span id="capsuleDetailIntensity"></span></div>
+            <div class="detail-row"><span class="detail-key">生成时间</span><span id="capsuleDetailTime"></span></div>
+            <div id="capsuleDetailFarewell" class="detail-farewell" hidden></div>
+            <div class="detail-actions">
+              <button id="capsuleDetailDelete" class="btn-danger" type="button">删除这枚胶囊</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ===================== 对话界面（隐藏） ===================== -->
+    <div id="chatView" class="view" hidden>
+      <header class="app-header">
+        <div class="logo">🧡</div>
+        <div class="title-block">
+          <h1 id="chatTitle">情绪树洞</h1>
+          <p id="chatSubtitle">正在倾诉中…</p>
+        </div>
+        <div class="header-actions">
+          <button id="chatCapsuleBtn" class="btn-ghost" type="button">💊 我的胶囊</button>
+          <button id="backBtn" class="btn-ghost" type="button">← 历史对话</button>
+        </div>
+      </header>
+
+      <main class="chat-layout">
+        <section class="chat-panel">
+          <div id="messages" class="messages"></div>
+
+          <div class="composer">
+            <textarea id="input" rows="2" placeholder="和我聊聊你的心情…"></textarea>
+            <div class="composer-actions">
+              <button id="endChatBtn" class="btn-accent" type="button">🧡 结束对话 · 生成胶囊</button>
+              <button id="sendBtn" class="btn-primary" type="button">发送</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="modalOverlay" class="modal-overlay" hidden>
+    <div class="modal">
+      <button id="modalClose" class="modal-close" type="button">×</button>
+      <div id="modalContent" class="modal-content"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="capsule.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
