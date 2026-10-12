@@ -73,6 +73,10 @@
 | 5 | — | 把 Render 地址填进 `config.js` 的 `apiBase` 并推送（Netlify 自动重新部署） |
 | 6 | Render | 把 `CORS_ORIGIN` 设为 Netlify 域名并重新部署 |
 
+> 第 3、5、6 步可以用一条命令代替逐项手工检查：
+> `powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api https://xxx.onrender.com -Site https://xxx.netlify.app`
+> （自动核对健康检查、Key 是否配齐、敏感文件 403、CORS 白名单、`config.js` 的 `apiBase` 是否回填正确；退出码 0 表示 HTTP 层全过）
+
 完整步骤、免费额度限制（休眠 / 数据不持久）与排错清单见 **[`DEPLOY.md`](./DEPLOY.md)**。
 
 ---
@@ -106,6 +110,7 @@
 ├─ app.js                     前端业务逻辑：状态 / 渲染 / SSE 流式解析
 ├─ server.js                  后端：静态服务 + SQLite 数据层 + AI 反向代理 + 健康检查
 ├─ start_server.bat           Windows 一键启动
+├─ verify_deploy.ps1          上线后一键验收：健康检查 / CORS 白名单 / 静态拦截 / apiBase 回填
 ├─ package.json               仅声明 engines 与 start 脚本（零依赖，供 Render 识别）
 ├─ netlify.toml               Netlify 部署配置（publish = "."，无构建）
 ├─ render.yaml                Render Blueprint（Web Service 定义）

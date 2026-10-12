@@ -1,8 +1,8 @@
 # Mood Capsule · 技术栈说明
 
-> **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`config.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`package.json`、`netlify.toml`、`render.yaml`、`DEPLOY.md`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
+> **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`config.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`verify_deploy.ps1`、`package.json`、`netlify.toml`、`render.yaml`、`DEPLOY.md`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
 > **实测环境**：Windows / Node.js **v24.21.0** / npm 11.19.0。已验证 `require('node:sqlite')` 可直接使用，**无需任何启动参数**。
-> **更新日期**：2026-10-12（新增：前后端分离部署支持 —— `config.js` 运行时后端地址 + `CORS_ORIGIN` 白名单 + `/healthz` 健康检查，详见 [`DEPLOY.md`](./DEPLOY.md)）
+> **更新日期**：2026-10-12（新增：前后端分离部署支持 —— `config.js` 运行时后端地址 + `CORS_ORIGIN` 白名单 + `/healthz` 健康检查；新增上线验收脚本 `verify_deploy.ps1`，详见 [`DEPLOY.md`](./DEPLOY.md) §7）
 > 前次更新：2026-10-09（新增：密钥外置到 `.env` + `.gitignore`，详见第 8.1 节）
 
 ---
@@ -433,6 +433,7 @@ toPercent(0-10 → 0-100) + recommendColors(emotionType) → openPreview()
 | `.gitignore` | 0.5 KB | 排除 `.env` / `mood.db*` / `*.log` / `node_modules/` | ➖ 版本控制 |
 | `README.md` | 4.8 KB | 仓库首页说明：功能、快速开始、接口、安全 | ➖ 文档 |
 | `start_server.bat` | 158 B | Windows 启动脚本（含 node 路径回退） | ➖ 便捷 |
+| `verify_deploy.ps1` | 11.8 KB | 上线验收脚本：健康检查 / CORS 白名单 / 敏感文件拦截 / `apiBase` 回填校验（零依赖，失败退出码 1） | ❌ |
 | `mood.db` / `-wal` / `-shm` | ~293 KB | SQLite 数据库（WAL 模式，自动生成，**已被忽略**） | ✅ 自动创建 |
 | `mood-capsule-chatflow.yaml` | 21.8 KB | Dify 工作流 DSL（云端编排的真源） | ➖ 云端必需 |
 | `emotion_capsule_svg.py` | 6.1 KB | Python 版 SVG 生成器（原型/参考实现） | ❌ |
@@ -461,6 +462,10 @@ cd d:\ai-project
 node _mc_check.js       # 静态一致性：DOM id / class / els 声明
 node _mc_smoke.js       # 端到端冒烟：78 项断言（内存后端，不写库）
 node _mc_api_check.js   # 接口契约（需 server.js 正在运行；只读，不修改数据）
+
+# 6) 上线验收（HTTP 层全自动；本地自测可用 -Api http://127.0.0.1:8000）
+cd "d:\ai-project\Mood Capsule"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api https://xxx.onrender.com -Site https://xxx.netlify.app
 ```
 
 ### 9.3 关键概念对照表

@@ -52,6 +52,9 @@ Invoke-RestMethod http://127.0.0.1:8000/healthz | ConvertTo-Json -Depth 4
 启动日志应显示 `监听：http://127.0.0.1:8000`（本地不会出现「云平台模式」字样）。
 浏览器打开 <http://127.0.0.1:8000>，确认能对话、能生成胶囊。**这一步通过再往下走。**
 
+> 也可以直接用验收脚本跑本地：`powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api http://127.0.0.1:8000`
+> 本地没设 `CORS_ORIGIN` 时脚本不会判失败，只会提示「本地自测：CORS 放开属预期」。
+
 ---
 
 ## 2. 推到 GitHub
@@ -110,6 +113,9 @@ git push origin main
 ## 4. 验证后端（拿到地址后立刻验一遍）
 
 构建完成后 Render 会给出服务地址，例如 `https://mood-capsule-api.onrender.com`。
+
+> 懒得逐条敲？本节的检查已被 [`verify_deploy.ps1`](./verify_deploy.ps1) 覆盖（用法见 §7），一条命令跑完：
+> `powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api https://xxx.onrender.com`
 
 ```powershell
 # 换成你自己的 Render 地址（不要带末尾斜杠）
@@ -203,14 +209,28 @@ $api = 'https://mood-capsule-api.onrender.com'
 
 ## 7. 验收清单（全部勾上即上线成功）
 
-- [ ] `GET /healthz` 返回 `ok: true`，`aiKeys` 两项均为 `true`
-- [ ] `GET /.env`、`GET /mood.db` 返回 `403`（敏感文件不通过 HTTP 暴露）
-- [ ] Netlify 站点打开后控制台没有 CORS 报错
+**a) 机器可检的项：一条命令跑完**
+
+```powershell
+# 只验后端
+powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api https://xxx.onrender.com
+
+# 后端 + 前端一起验（还会比对 config.js 的 apiBase 是否已回填、有没有误把 .env / mood.db 发布上去）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api https://xxx.onrender.com -Site https://xxx.netlify.app
+```
+
+脚本会自动检查：`/healthz` 的 `ok` 与 `aiKeys`、静态资源返回 200、`/.env` 与 `mood.db*` 返回 403、
+路径穿越被拒、CORS 白名单（名单内回显 Origin / 名单外不回显 / OPTIONS 预检同规则）、
+`config.js` 的 `apiBase` 是否已回填正确、前端有没有误发布敏感文件。
+**全部 PASS 且退出码为 0 才算通过**；任何一项失败都会打印原因与处理提示，退出码为 1。
+
+**b) 必须人工点的项**
+
 - [ ] 发一条消息能**逐字**出现（打字机效果正常 → 说明 SSE 没被中间层缓冲）
 - [ ] 点「结束对话 · 生成胶囊」能出现情绪总结与配色界面
 - [ ] 保存后能在「我的胶囊」里打开详情并删除
 - [ ] 刷新页面后历史对话与胶囊仍在（同一实例存活期内）
-- [ ] DevTools → Network 里请求地址都是 `https://xxx.onrender.com/api/...`
+- [ ] Netlify 站点控制台没有 CORS 报错，DevTools → Network 里请求地址都是 `https://xxx.onrender.com/api/...`
 
 ## 8. 常见问题排查
 
@@ -269,5 +289,6 @@ git add . ; git commit -m "feat: xxx" ; git push origin main
 | 数据目录 | Render 环境变量 `DATA_DIR`（默认与 `server.js` 同目录） |
 | 端口/监听 | 平台注入 `PORT` 时自动监听 `0.0.0.0`；本地固定 `127.0.0.1:8000` |
 | 密钥 | 仅存于 Render 环境变量：`DIFY_API_KEY` / `DEEPSEEK_API_KEY` |
+| 一键验收 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api <后端地址> -Site <前端地址>`（退出码 0 = HTTP 层全过） |
 
 
