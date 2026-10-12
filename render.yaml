@@ -23,7 +23,7 @@ services:
       - key: CORS_ORIGIN
         sync: false            # 填 Netlify 站点地址，如 https://mood-capsule.netlify.app
       - key: NODE_VERSION
-        value: "24.21.0"       # node:sqlite 需要 >= 22.13（免 --experimental-sqlite 标志）
+        value: "24.21.0"       # node:sqlite 需 Node >= 22.5（22.13 起默认开启）；Render 上固定 24.x 最省事
 
     # ------------------------------------------------------------
     # 可选：持久化 SQLite 数据（需要付费实例，免费实例不支持挂载磁盘）

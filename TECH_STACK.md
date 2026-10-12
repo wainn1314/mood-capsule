@@ -2,7 +2,8 @@
 
 > **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`config.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`verify_deploy.ps1`、`ecosystem.config.js`、`package.json`、`netlify.toml`、`render.yaml`、`DEPLOY.md`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
 > **实测环境**：Windows / Node.js **v24.21.0** / npm 11.19.0。已验证 `require('node:sqlite')` 可直接使用，**无需任何启动参数**。
-> **更新日期**：2026-10-12（本次：启动配置可观测性 + 自建服务器支持 —— `PORT`/`HOST` 可由 `.env` 覆盖、启动日志打印「`.env` 路径 + 每项配置来源」、`/healthz` 增加 `/health` 等价别名并返回 `listen` 与 `envFile`、`server.listen` 增加可读错误处理（EADDRINUSE / EACCES / EADDRNOTAVAIL）、新增 PM2 配置 `ecosystem.config.js`，详见 [`DEPLOY.md`](./DEPLOY.md) §12）
+> **更新日期**：2026-10-12（本次：**定位「PM2 在旧 node 上跑 `server.js` → `node:sqlite` 加载失败 → 进程 online 但端口无监听」** —— `server.js` 将其转为可照做的 `[启动失败]` 指引、`.env` 里写 `NODE_OPTIONS` 时明确警告无效；`ecosystem.config.js` 新增 `interpreter` 锁定 + 版本校验（不达标直接报错）并按版本自动补 `--experimental-sqlite`；README 环境要求、`DEPLOY.md` §8 排错表 / §12.1 / §12.2 全面改写为「生效的是实际运行 `server.js` 的那个 node」口径，详见 §8.3）
+> 前次更新：2026-10-12（启动配置可观测性 + 自建服务器支持 —— `PORT`/`HOST` 可由 `.env` 覆盖、启动日志打印「`.env` 路径 + 每项配置来源」、`/healthz` 增加 `/health` 等价别名并返回 `listen` 与 `envFile`、`server.listen` 增加可读错误处理（EADDRINUSE / EACCES / EADDRNOTAVAIL）、新增 PM2 配置 `ecosystem.config.js`，详见 [`DEPLOY.md`](./DEPLOY.md) §12）
 > 前次更新：2026-10-12（前后端分离部署支持 —— `config.js` 运行时后端地址 + `CORS_ORIGIN` 白名单 + `/healthz` 健康检查；上线验收脚本 `verify_deploy.ps1`，详见 §7）
 > 更早更新：2026-10-09（密钥外置到 `.env` + `.gitignore`，详见第 8.1 节）
 
@@ -24,7 +25,7 @@
 | AI 编排 | **Dify 工作流（advanced-chat DSL）** | `mood-capsule-chatflow.yaml`，可导入 Dify 平台 |
 | 大模型 | DeepSeek（provider `deepseek`） | 工作流节点用 `deepseek-v4-flash`；外观设计直连 `deepseek-chat` |
 | 依赖管理 | **零第三方依赖**（`package.json` 只声明 `engines` 与 `start`，无 `dependencies`） | 无需 `npm install` 即可运行 |
-| 运行时依赖 | Node.js **≥ 22.13**（`node:sqlite` 免 `--experimental-sqlite` 的最低版本） | 本机 24.21.0 |
+| 运行时依赖 | Node.js **≥ 22.13**（`node:sqlite` 需 ≥ 22.5；22.5–22.12 还要 `--experimental-sqlite`，22.13 起默认可用；**18.x / 20.x 完全没有该模块**） | 本机 24.21.0；注意「生效的是实际运行 `server.js` 的那个 node」（PM2 会按 PATH 猜，见 §8.3） |
 | 云部署 | 前端 Netlify（静态）+ 后端 Render（Node）；也可两台合一的**自建服务器**（PM2 + nginx） | 见 `netlify.toml` / `render.yaml` / [`DEPLOY.md`](./DEPLOY.md)（§12 自建方案） |
 
 ---
@@ -64,7 +65,7 @@
 | 跨域 | 无需（同源） | `CORS_ORIGIN` 白名单，由 `res.writeHead` 包装统一注入 | 无需（同源）；前端放别处时同样用 `CORS_ORIGIN` |
 | 前端后端地址 | `config.js` 留空，走相对路径 | `config.js` 填 Render 地址 | `config.js` 留空 |
 | 数据 | 项目目录 `mood.db` | 同一路径，但平台磁盘临时；持久化需 `DATA_DIR` + 挂载磁盘 | 项目目录或 `DATA_DIR`；`mood.db*` 自行备份 |
-| 版本要求 | Node ≥ 22.13 | `NODE_VERSION` 由平台指定（`render.yaml` 里为 24.21.0） | Node ≥ 22.13（本机 24.21.0 实测） |
+| 版本要求 | Node ≥ 22.13 | `NODE_VERSION` 由平台指定（`render.yaml` 里为 24.21.0） | Node ≥ 22.13，且必须是**实际运行 `server.js` 的那个 node**（PM2 会按 PATH 猜；`ecosystem.config.js` 已用 `interpreter` 锁定 + 版本校验） |
 | 进程管理 | 手动 `node server.js` | 平台托管 | PM2（`ecosystem.config.js`：fork、单实例、锁定 `cwd`） |
 
 > 关键实现：`CORS_ORIGIN` 采用「按请求 Origin 计算 → 统一覆盖/删除响应头」的方式，
@@ -153,7 +154,7 @@ Dify 的对话接口返回 `text/event-stream`，前端**没有使用任何 Even
 
 | 项 | 说明 |
 |---|---|
-| 运行时 | Node.js（本机 v24.21.0）；要求 **≥ 22**，因为使用了 `node:sqlite` |
+| 运行时 | Node.js（本机 v24.21.0）；要求 **≥ 22.13**（`node:sqlite` 需 ≥ 22.5，22.5–22.12 还要 `--experimental-sqlite`；18.x/20.x 无此模块） |
 | HTTP 服务 | `node:http`（`http.createServer` 手写路由，**无 Express/Koa/Fastify**） |
 | 出网请求 | `node:https`（转发 Dify / DeepSeek，支持流式 pipe） |
 | 数据库 | `node:sqlite` 的 `DatabaseSync`（**内置，无需 `better-sqlite3`**） |
@@ -395,11 +396,12 @@ toPercent(0-10 → 0-100) + recommendColors(emotionType) → openPreview()
 - 影响：同时开两个标签页操作会**互相覆盖**（后保存者胜）；数据量大后每次读写都是全量；
 - 建议：保持 PUT 语义但对客户端更友好 —— 增加 `POST /api/sessions`（单条 upsert）与 `DELETE /api/sessions/:id`，前端改为增量调用；或引入 `updatedAt` 乐观锁检测冲突。
 
-### 8.3 【中】数据库驱动依赖 Node 22.5+
+### 8.3 【中】数据库驱动依赖 Node 22.5+（且必须看「真正在跑的那个 node」）
 
-- 现状：使用 `node:sqlite`（Node 22.5 起引入，本机 24.21.0 实测可用且**无需任何 flag**）；
-- 影响：Node 20 及以下直接启动失败；
-- 建议：`start_server.bat` 里加版本判断与提示文案，或在 README 首行写明「需要 Node 22.5+」。
+- 现状：使用 `node:sqlite` —— Node **22.5** 引入该模块；22.5–22.12 需 `--experimental-sqlite`，**≥ 22.13 / ≥ 23.4 默认可用**（本机 24.21.0 实测无需任何参数）；**18.x / 20.x 完全没有该模块**；
+- 实测坑（阿里云 ECS + PM2）：shell 里 `node -v` 是 nvm 的 v22.23.3，但 PM2 的守护进程 / fork 用的是**另一个旧 node**（`pm2 logs` 的栈帧样式属 18/20 世代：`Module._load` / `Module._extensions..js`，而 22.x 已改名为 `Function._load` / `Object..js`）。于是报 `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite`，`pm2 status` 显示 online 却**端口毫无监听**（每次都崩在 `require`，根本没走到 `listen()`）——很容易被误判成端口 / 防火墙问题；
+- 已做：① `server.js` 把该错误替换为 `[启动失败] …` + 排查命令与修法（含 `pm2 describe | grep interpreter`、`/proc/<pid>/exe`）；② `.env` 里若写了 `NODE_OPTIONS` 会明确警告「不会生效」；③ `ecosystem.config.js` 用 `interpreter: process.execPath` 锁定解释器、按版本自动补 flag、**版本不达标直接抛错**（不再空转重启）；④ README 环境要求 + `DEPLOY.md` §8 排错表 / §12.1 / §12.2 全部改为「生效的是实际运行 server.js 的那个 node」口径；
+- 建议：自建服务器优先用 NodeSource 把**系统** node 装到 22.13+/24.x（避免 nvm 与 apt 两套 node 混用）；必须用 nvm 时：`nvm use 22` → `nvm alias default 22` → `pm2 kill` → `pm2 start ecosystem.config.js`。
 
 ### 8.4 【中】工作流模型名依赖 Dify 环境
 
@@ -461,7 +463,8 @@ toPercent(0-10 → 0-100) + recommendColors(emotionType) → openPreview()
 ### 9.2 复现验证命令
 
 ```powershell
-# 1) 环境要求：Node.js >= 22.13（node:sqlite 免 --experimental-sqlite 的最低版本）
+# 1) 环境要求：Node.js >= 22.13（node:sqlite 需 >= 22.5；自检：node -e "require('node:sqlite')" 不报错）
+#    自建服务器注意：PM2 可能用 PATH 里的旧 node，见 DEPLOY.md §12.1 / §12.2
 node --version
 
 # 2) 语法检查（全部 JS 入口 + PM2 配置）

@@ -18,7 +18,34 @@ const http = require('node:http');
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+// node:sqlite 能否加载，只取决于「实际运行本文件的那个 node」，与 shell 里 `node -v` 看到什么无关：
+//   < 22.5      ：完全没有该内置模块 → ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite
+//   22.5–22.12  ：需要显式 --experimental-sqlite
+//   ≥ 22.13 / ≥ 23.4：默认可用（可用 --no-experimental-sqlite 关掉）
+// 高频踩坑：shell 里是 nvm 的 22.x，但 PM2 fork 应用时按 PATH 找 node，可能命中 apt 安装的旧 node（如
+// /usr/bin/node 18.x），于是「明明装了新 node 却报模块不存在」，且 PM2 里进程反复重启、端口毫无监听。
+let DatabaseSync;
+try {
+  ({ DatabaseSync } = require('node:sqlite'));
+} catch (e) {
+  if (e && (e.code === 'ERR_UNKNOWN_BUILTIN_MODULE' || e.code === 'MODULE_NOT_FOUND')) {
+    console.error('[启动失败] 当前 Node.js（%s）无法加载内置模块 node:sqlite：%s', process.version, e.message);
+    console.error('  node:sqlite 需要 Node >= 22.5（22.5–22.12 还要加 --experimental-sqlite；>= 22.13 / 24.x 默认可用）。');
+    console.error('  最常见原因：PM2 用的不是你以为的那个 node —— 按 PATH 命中了系统旧版（如 /usr/bin/node 18.x）。');
+    console.error('  先确认在用的是哪个 node（关键排查）：');
+    console.error('    pm2 describe mood-capsule-api | grep -Ei "interpreter|node.js version|script path"');
+    console.error('    ls -l /proc/$(pgrep -f ProcessContainerFork | head -1)/exe');
+    console.error('  修法（任选其一）：');
+    console.error('    1) 用仓库配置启动：会把 PM2 使用的 node 锁为解释器，并按版本自动补参数');
+    console.error('       cd /root/mood-capsule && nvm use 22 && pm2 delete mood-capsule-api && pm2 start ecosystem.config.js && pm2 save');
+    console.error('    2) 显式指定解释器：pm2 delete mood-capsule-api && pm2 start server.js --name mood-capsule-api --interpreter "$(nvm which 22)"');
+    console.error('    3) 连 PM2 守护进程一起换 node：nvm alias default 22 && pm2 kill && pm2 start ecosystem.config.js');
+    console.error('    4) 或把系统 node 升到 22.13+（NodeSource 源），两种启动方式都能跑');
+    console.error('  注意：把 NODE_OPTIONS 写进 .env 无效 —— Node 在加载本文件之前就已读取 NODE_OPTIONS。');
+    process.exit(1);
+  }
+  throw e;
+}
 
 const BASE_DIR = __dirname;
 const ENV_PATH = path.join(BASE_DIR, '.env');
@@ -47,6 +74,14 @@ let ENV_FILE_USED = ''; // 实际加载到的 .env 绝对路径；空串表示�
   try {
     process.loadEnvFile(found[0]);
     ENV_FILE_USED = found[0];
+    // 顺带拦住一个高频踩坑：NODE_OPTIONS 写在 .env 里永远不会生效
+    // （Node 在启动进程时就读取了 NODE_OPTIONS，而 .env 是启动之后才由本文件加载的）。
+    try {
+      if (/^[ \t]*NODE_OPTIONS[ \t]*=/m.test(fs.readFileSync(found[0], 'utf8'))) {
+        console.warn('[提示] %s 里的 NODE_OPTIONS 不会生效：Node 在加载本文件之前就已读取 NODE_OPTIONS。', found[0]);
+        console.warn('       需要给 node 传参数（如 Node 22.x 的 --experimental-sqlite）请用 PM2 的 node_args / 命令行参数，见 DEPLOY.md §12.2。');
+      }
+    } catch (err) { /* 读不到 .env 内容不影响启动，忽略 */ }
   } catch (e) {
     console.warn('[提示] .env 解析失败（%s）：%s', found[0], e && e.message ? e.message : e);
   }

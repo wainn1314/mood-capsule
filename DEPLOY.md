@@ -238,8 +238,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api htt
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 控制台报 `blocked by CORS policy` | `CORS_ORIGIN` 没包含当前前端域名（必须是带 `https://` 的完整域名、不能带路径） | 补全后重启 Render 服务 |
-| **改了 `.env` 的 `PORT` / `HOST`，重启后仍监听 `127.0.0.1:8000`** | ① 服务器上是**旧版 `server.js`**（旧版把端口硬编码为 `const PORT = 8000;`，完全不读 `.env`）；② `.env` 没被读到；③ shell / PM2 里残留了同名变量——**系统环境变量优先级高于 `.env`** | 看启动日志的 `.env：` 与 `配置来源：` 两行：显示 `未加载` = 没读到；显示 `[系统环境变量，覆盖 .env]` = 被残留变量盖掉了。两行都正常却还不对 → 代码太旧，`git pull` 后重启（见 §12） |
-| `pm2 status` 是 `online`，但端口没有监听、`curl` 被拒 | 监听还没建立就退出了（端口被占用 / 权限不足 / `HOST` 填了公网 IP），PM2 会以极短间隔反复重启，看起来「在线」实则连不上 | 看 `pm2 logs <进程名> --lines 50`：`server.js` 会打印 `[启动失败] 无法监听 0.0.0.0:8123 —— listen EADDRINUSE / EACCES / EADDRNOTAVAIL` 与对应处理建议 |
+| **改了 `.env` 的 `PORT` / `HOST`，重启后仍监听 `127.0.0.1:8000`** | ① 服务器上是**旧版 `server.js`**（旧版把端口硬编码为 `const PORT = 8000;`，完全不读 `.env`）；② `.env` 没被读到；③ shell / PM2 里残留了同名变量——**系统环境变量优先级高于 `.env`**；④ 进程压根没起来（连 `listen()` 都没走到） | **先看 `pm2 logs <进程名> --lines 50` 的第一行错误**（`[启动失败] …` 会直接说明原因）；再看启动日志的 `.env：` 与 `配置来源：` 两行：显示 `未加载` = 没读到；显示 `[系统环境变量，覆盖 .env]` = 被残留变量盖掉了。两行都正常却还不对 → 代码太旧，`git pull` 后重启（见 §12） |
+| `pm2 status` 是 `online`，但端口没有监听、`curl` 被拒 | ① 监听还没建立就退出了（端口被占用 / 权限不足 / `HOST` 填了公网 IP）；② 进程在 `require` 阶段就崩了（如 `node:sqlite` 加载失败），PM2 以极短间隔反复重启，看着「在线」实则连不上 | 看 `pm2 logs <进程名> --lines 50`：前者会打印 `[启动失败] 无法监听 0.0.0.0:8123 —— listen EADDRINUSE / EACCES / EADDRNOTAVAIL` + 建议；后者会打印 `[启动失败] … node:sqlite …`（= node 版本不对，见本表最后两行） |
 | `curl http://localhost:8123/health` 返回 `404` | 健康检查路径是 `/healthz`（`/health`、`/api/health` 是等价别名；**旧版代码没有这个端点**） | 改用 `/healthz`，或升级到最新代码后重启 |
 | 服务器上 `curl` 正常，但局域网 / 公网访问不通 | ① 只监听了回环地址；② 阿里云安全组没放行端口；③ 系统防火墙未放行 | 确认日志里是 `监听：http://0.0.0.0:8123（对外监听）`；再到安全组放行 TCP 8123（或加 nginx 反代，见 §12） |
 | 页面提示「未配置后端地址」 | `config.js` 的 `apiBase` 仍为空，且当前不在 localhost | 按 §6.1 填好并推送 |
@@ -249,7 +249,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api htt
 | 首次打开白屏转圈约 1 分钟 | 免费实例休眠后的冷启动 | 正常现象；介意可升级实例，或用定时任务定期请求 `/healthz` |
 | 回复不是逐字出现，而是整段蹦出 | 中间多了一层做缓冲的代理（如自建 CDN / 又套了 Netlify 代理） | 保持「前端直连 Render」，不要加 Netlify 代理层 |
 | 重新部署后历史对话、胶囊清空 | 免费实例磁盘是临时的 | 见 §9 |
-| 启动即报错找不到 `node:sqlite` | 运行时 Node < 22.13 | 设 `NODE_VERSION=24.21.0` 后重新部署 |
+| 启动即报 `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite` | **实际运行 `server.js` 的那个 node 太旧**：`node:sqlite` 需 Node ≥ 22.5（18.x / 20.x **根本没有**这个模块）。你 shell 里 `node -v` 明明是 nvm 的 22.x，但 PM2 的守护进程 / fork 用的是另一个 node —— 常见于「当初是用旧 node 执行的 `pm2`」（PM2 守护进程会一直沿用那个 node，换 nvm 版本也不会自动跟） | ① 先确认真正在用的 node：`pm2 describe mood-capsule-api \| grep -Ei "interpreter\|node.js version"`、`ls -l /proc/$(pgrep -f ProcessContainerFork \| head -1)/exe`；② 修：`cd /root/mood-capsule && nvm use 22 && node -e "require('node:sqlite')" && pm2 kill && pm2 delete mood-capsule-api && pm2 start ecosystem.config.js && pm2 save`（`ecosystem.config.js` 会把解释器锁成执行 `pm2 start` 的那个 node，并在版本不达标时**直接报错**而不是空转重启） |
+| `pm2 describe` 里 `interpreter` 或 `node.js version` 是 18.x / 20.x | 同上：PM2 没用到你的 nvm 22.x | 用 `ecosystem.config.js` 重启（上面第 ② 步）；或临时执行 `pm2 delete mood-capsule-api && pm2 start server.js --name mood-capsule-api --interpreter "$(nvm which 22)"`；或干脆用 NodeSource 把**系统** node 装成 22.x/24.x，让两种启动方式都用同一个 node |
+| 启动即报错找不到 `node:sqlite`（托管平台 Render） | 平台的 `NODE_VERSION` 低于 22.5（或未生效） | 保持 `NODE_VERSION=24.21.0` 后重新部署；平台侧不存在「PM2 用错 node」的问题 |
 | Netlify 站点里能下载到 `server.js`、`DEPLOY.md` | `publish = "."` 会发布仓库根目录里所有已提交文件 | 无密钥泄露风险；介意可把前端挪到 `public/` 目录并把 `publish` 改成 `public`（同时要改 `server.js` 的静态目录） |
 | Netlify 构建日志提示 `npm install` 失败 | 一般不会发生（零依赖）；若发生请检查是否断网/私有 registry 配置 | 本项目无依赖，可忽略该步骤 |
 
@@ -305,31 +307,56 @@ git add . ; git commit -m "feat: xxx" ; git push origin main
 ### 12.1 准备 Node 与代码
 
 ```bash
-# Node.js ≥ 22.13（node:sqlite 免 --experimental-sqlite 的前提；本机在 v24.21.0 实测通过）
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+# Node.js：node:sqlite 需 >= 22.5；22.5–22.12 要 --experimental-sqlite，>= 22.13 / 24.x 默认可用（18.x / 20.x 没有该模块）
+# 方案 A（推荐）：用 NodeSource 把「系统」node 装成 22.x/24.x —— PM2 无论怎么启动都是同一个 node，最省心
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -     # 想装 24.x 就把 22.x 换成 24.x
 sudo apt-get install -y nodejs
-node -v                       # 应 ≥ v22.13
-
+node -v                                            # 应 >= v22.13
 sudo npm i -g pm2
+
+# 方案 B：nvm（多版本切换）——能装，但要额外当心 PM2 会沿用「启动守护进程时」的那个 node
+#   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+#   nvm install 22 && nvm alias default 22 && nvm use 22
+#   sudo npm i -g pm2
+
+node -e "require('node:sqlite')" && echo "[OK] 这个 node 可以跑本项目"   # ← 关键自检，不报错才继续
 
 git clone <你的仓库地址> /root/mood-capsule
 cd /root/mood-capsule
 cp .env.example .env
-vim .env                      # 填 DIFY_API_KEY / DEEPSEEK_API_KEY；自建服务器再放开下面两行
+vim .env    # 填 DIFY_API_KEY / DEEPSEEK_API_KEY；自建服务器还要把下面两行的 # 去掉（否则退回监听 127.0.0.1:8000）
 # PORT=8123
 # HOST=0.0.0.0
 ```
 
 > 项目零依赖，**不需要 `npm install`**（仓库里的 `package.json` 只声明 `engines` 与 `start` 脚本）。
+> ⚠️ **务必分清「你以为的 node」与「真正运行 `server.js` 的 node」**：`node -v` 看的是当前 shell 的 node，
+> 而 PM2 守护进程会一直沿用「当初启动它」的那个 node（换 nvm 版本也不会自动跟）。两者不一致时的典型症状就是
+> 启动即报 `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite`，PM2 显示 online 但 `ss` 里端口
+> 毫无监听 —— 看着像端口 / 防火墙问题，其实与端口无关（每次都崩在 `require`，根本没走到 `listen()`）。
 
 ### 12.2 用仓库里的 PM2 配置启动
 
 ```bash
 cd /root/mood-capsule
-pm2 delete mood-capsule-api        # 先清掉旧定义：旧的 cwd / env 会残留在 PM2 里
-pm2 start ecosystem.config.js      # 读仓库里的 ecosystem.config.js（fork、单实例、cwd = 项目根目录）
-pm2 save                           # 保存进程列表
-pm2 startup                        # 按提示执行它输出的那行 sudo 命令 → 开机自启
+nvm use 22                          # 用 nvm 的先切到 22.x（ecosystem 会把它锁为解释器）；系统装的 22.x 可跳过
+node -e "require('node:sqlite')"    # 自检：不报错才继续
+pm2 kill                            # 关键：清掉「由旧 node 拉起的 PM2 守护进程」，否则它 fork 出来的还是旧 node
+pm2 delete mood-capsule-api         # 清旧定义：旧的 cwd / env / interpreter 会残留在 PM2 里
+pm2 start ecosystem.config.js       # 读仓库配置（fork、单实例、cwd=项目根目录、interpreter=执行本命令的 node）
+pm2 save                            # 保存进程列表
+pm2 startup                         # 按提示执行它输出的那行 sudo 命令 → 开机自启
+```
+
+`pm2 start` 时会打印一行 `[ecosystem] 解释器 = …（v22.23.3），node:sqlite 默认可用`；若 node 版本不达标，
+它会**直接报错退出**并给出修法（而不是让 PM2 空转重启、看起来「online 却没监听」）。
+
+再确认解释器没被 PATH 里的旧 node 顶掉（这是「online 却没监听」最常见的根因）：
+
+```bash
+pm2 describe mood-capsule-api | grep -Ei "interpreter|node.js version|exec mode|script path"
+ls -l /proc/$(pgrep -f ProcessContainerFork | head -1)/exe   # 应用进程真正在用的 node 二进制
+# 期望：都指向 22.x（如 /root/.nvm/versions/node/v22.23.3/bin/node），而不是 /usr/bin/node（18.x）
 ```
 
 启动日志（`pm2 logs mood-capsule-api --lines 50`）里应看到这三行：

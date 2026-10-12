@@ -22,8 +22,12 @@
 
 ## 环境要求
 
-- **Node.js ≥ 22.13**（使用内置 `node:sqlite`；22.13 起免 `--experimental-sqlite` 标志，本机在 v24.21.0 实测通过）
-  > `.env` 的自动加载依赖 `process.loadEnvFile()`（Node ≥ 20.12）；低版本请改用系统环境变量。
+- **Node.js ≥ 22.13（推荐 24.x）**（使用内置 `node:sqlite`；22.5–22.12 也可用，但需自行加 `--experimental-sqlite`）
+  > ⚠️ 生效的是**实际运行 `server.js` 的那个 node**。若用过 nvm，注意 PM2 / systemd 会按 `PATH` 解析 `node`，很容易命中 apt 装的旧版
+  > （`/usr/bin/node` 18.x 里**根本没有** `node:sqlite`）。症状：启动即报 `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite`、
+  > PM2 里进程反复重启、`ss` 里端口毫无监听（看着「online」其实连 `listen()` 都没走到）。自建服务器请用仓库的 `ecosystem.config.js` 启动 ——
+  > 它会锁定解释器并校验版本（见 [`DEPLOY.md`](./DEPLOY.md) §12.2）；排查用 `pm2 describe mood-capsule-api | grep -Ei "interpreter|node.js version"` 与 `ls -l /proc/<pid>/exe`。
+  > `.env` 的自动加载依赖 `process.loadEnvFile()`（Node ≥ 20.12）；低版本请改用系统环境变量。**`NODE_OPTIONS` 写在 `.env` 里永远无效**（Node 在加载 `.env` 之前就读取了它），需要传参请用 PM2 的 `interpreter` / `node_args`。
 - 无需 `npm install`，**没有任何第三方依赖**，也没有构建步骤。
   > 仓库里的 `package.json` 只声明 `engines` 与 `start` 脚本，供 Render 等平台识别运行时，不引入任何依赖。
 
