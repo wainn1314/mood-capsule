@@ -1,0 +1,14 @@
+{
+  "name": "mood-capsule",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mood Capsule 情绪树洞 & 情绪胶囊：原生前端 + 单文件 Node.js 后端（node:sqlite），零第三方依赖",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0 <25.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js && node --check capsule.js && node --check config.js"
+  }
+}

@@ -1,8 +1,9 @@
 # Mood Capsule · 技术栈说明
 
-> **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
+> **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`config.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`package.json`、`netlify.toml`、`render.yaml`、`DEPLOY.md`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
 > **实测环境**：Windows / Node.js **v24.21.0** / npm 11.19.0。已验证 `require('node:sqlite')` 可直接使用，**无需任何启动参数**。
-> **更新日期**：2026-10-09（新增：密钥外置到 `.env` + `.gitignore`，详见第 8.1 节）
+> **更新日期**：2026-10-12（新增：前后端分离部署支持 —— `config.js` 运行时后端地址 + `CORS_ORIGIN` 白名单 + `/healthz` 健康检查，详见 [`DEPLOY.md`](./DEPLOY.md)）
+> 前次更新：2026-10-09（新增：密钥外置到 `.env` + `.gitignore`，详见第 8.1 节）
 
 ---
 
@@ -11,18 +12,19 @@
 | 维度 | 选型 | 关键事实 |
 |---|---|---|
 | 应用形态 | 本地单用户 Web 应用（情绪共情对话 + 情绪胶囊收藏） | 双击 `start_server.bat` → 浏览器打开 `http://127.0.0.1:8000` |
-| 前端框架 | **无框架、无构建、无 CDN** | 原生 HTML + CSS + ES2020 JS，3 个 `<script>/<link>` 引用 |
+| 前端框架 | **无框架、无构建、无 CDN** | 原生 HTML + CSS + ES2020 JS，4 个 `<script>/<link>` 引用（`config.js` 必须最先加载） |
 | 前端模块化 | 经典脚本 + 全局命名空间 `window.MoodCapsule` | 非 ESM、无打包器 |
 | 视图/路由 | 手写「切换 `hidden` 属性」的多视图 SPA | 5 个视图容器 |
 | 流式输出 | `fetch` + `ReadableStream.getReader()` **手写 SSE 解析** | 按 `\n\n` 切块、跨 chunk 缓冲、剥离 `<think>` |
 | 图形渲染 | **纯 SVG 字符串拼接**（`capsule.js`） | 无 Canvas、无图表库 |
 | 后端 | **单文件 Node.js，零第三方依赖** | `server.js` 仅用 `node:*` 内置模块 |
 | 数据库 | **SQLite（`node:sqlite` 内置 `DatabaseSync`）** | 文件 `mood.db`，WAL 模式，**不需要 npm install** |
-| 鉴权/密钥 | Key 只经后端注入，前端零 Key | 后端从**环境变量 / `.env`** 读取，源码内无密钥；前端 `API_BASE = ''`，全部相对路径 |
+| 鉴权/密钥 | Key 只经后端注入，前端零 Key | 后端从**环境变量 / `.env`** 读取，源码内无密钥；前端 `API_BASE` 默认 `''`（同源相对路径），跨域部署时由 `config.js` 指定后端地址 |
 | AI 编排 | **Dify 工作流（advanced-chat DSL）** | `mood-capsule-chatflow.yaml`，可导入 Dify 平台 |
 | 大模型 | DeepSeek（provider `deepseek`） | 工作流节点用 `deepseek-v4-flash`；外观设计直连 `deepseek-chat` |
-| 依赖管理 | **无** `package.json` / `node_modules` / lock 文件 | 真正的零安装 |
-| 运行时依赖 | Node.js **≥ 22**（`node:sqlite` 引入版本） | 本机 24.21.0 |
+| 依赖管理 | **零第三方依赖**（`package.json` 只声明 `engines` 与 `start`，无 `dependencies`） | 无需 `npm install` 即可运行 |
+| 运行时依赖 | Node.js **≥ 22.13**（`node:sqlite` 免 `--experimental-sqlite` 的最低版本） | 本机 24.21.0 |
+| 云部署 | 前端 Netlify（静态）+ 后端 Render（Node） | 见 `netlify.toml` / `render.yaml` / [`DEPLOY.md`](./DEPLOY.md) |
 
 ---
 
@@ -33,14 +35,16 @@
 ├─ index.html    8.9 KB   5 个视图容器（history / chat / capsule / preview / capsuleDetail）
 ├─ styles.css   14.3 KB   原生 CSS（自定义属性、Grid、Flex、@keyframes、@media）
 ├─ capsule.js   22.2 KB   纯 SVG 胶囊绘制引擎（window.MoodCapsule，零外部依赖）
+├─ config.js     0.6 KB   运行时配置：后端地址 apiBase（跨域部署时填，本地留空）
 └─ app.js       34.8 KB   状态管理 + 视图渲染 + 手写 SSE 流式解析
         │
-        │  fetch 相对路径（API_BASE = ''）——前端不持有任何 API Key
+        │  fetch：API_BASE + 路径（本地 API_BASE='' 走同源相对路径）——前端不持有任何 API Key
         ▼
-本地后端 server.js  13.4 KB   ← 零第三方依赖，仅 Node 内置模块
+后端 server.js  13.4 KB   ← 零第三方依赖，仅 Node 内置模块
 ├─ .env 加载        process.loadEnvFile()（Node ≥ 20.12，无第三方 dotenv）
-├─ node:http      静态文件服务 + 路由 + CORS
-├─ node:sqlite    持久化 mood.db（WAL 模式，内置驱动）
+├─ node:http      静态文件服务（拦截 .env / mood.db）+ 路由 + CORS 白名单
+├─ node:sqlite    持久化 mood.db（WAL 模式，内置驱动，目录由 DATA_DIR 决定）
+├─ /healthz       健康检查（平台探活用：返回 Key / 数据目录 / CORS 模式）
 └─ node:https     反向代理（仅在此处注入 API Key）
         │
         ├─► https://api.dify.ai/v1        Dify 工作流：意图识别 / 共情对话 / 情绪总结
@@ -48,6 +52,20 @@
 ```
 
 **核心设计**：把「密钥」「跨域」「持久化」三件事全部收进本地后端，前端退化为纯 UI + 流式渲染，因此前端代码可以直接用浏览器打开调试，也不会泄露凭据。
+
+### 1.1 两种部署形态
+
+| | 本地运行（默认） | 线上分离部署 |
+|---|---|---|
+| 静态前端 + 后端 | 同一个进程，同源 | Netlify（前端）/ Render（后端），跨域 |
+| 监听地址 | `127.0.0.1:8000`（只绑回环） | 平台注入 `PORT` → 自动监听 `0.0.0.0`（`IS_CLOUD` 分支） |
+| 跨域 | 无需（同源） | `CORS_ORIGIN` 白名单，由 `res.writeHead` 包装统一注入 |
+| 前端后端地址 | `config.js` 留空，走相对路径 | `config.js` 填 Render 地址 |
+| 数据 | 项目目录 `mood.db` | 同一路径，但平台磁盘临时；持久化需 `DATA_DIR` + 挂载磁盘 |
+| 版本要求 | Node ≥ 22.13 | `NODE_VERSION` 由平台指定（`render.yaml` 里为 24.21.0） |
+
+> 关键实现：`CORS_ORIGIN` 采用「按请求 Origin 计算 → 统一覆盖/删除响应头」的方式，
+> 因此 JSON 接口、SSE 透传、OPTIONS 预检三条路径的行为完全一致（`server.js` 中的 `corsHeadersFor()` + `res.writeHead` 包装）。
 
 ---
 

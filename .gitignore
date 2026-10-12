@@ -28,6 +28,8 @@ node_modules/
 dist/
 build/
 .cache/
+.netlify/
+.render/
 
 # ---- 编辑器与系统 ----
 .vscode/

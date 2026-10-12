@@ -1,0 +1,44 @@
+# ============================================================
+# Netlify 部署配置（前端：纯静态，无构建步骤）
+# 部署方式：Netlify → Add new site → Import an existing project → 选择 GitHub 仓库
+#   Build command      : 留空（package.json 中没有 build 脚本，无需构建）
+#   Publish directory  : .（本文件里的 publish 已声明，Dashboard 留空即可）
+# 重要：请用 Git 导入的方式部署，不要用拖拽上传整个目录（会把 mood.db 等本地文件一起传上去）。
+# 部署完成后，记得回到 config.js 把 apiBase 改成 Render 后端地址，并推送触发重新部署。
+# ============================================================
+
+[build]
+  publish = "."
+
+[build.environment]
+  NODE_VERSION = "24"
+
+# ------------------------------------------------------------
+# 可选方案：把 /api/* 反向代理到 Render 后端（默认关闭，且**不推荐**）
+# 原因：Netlify 的代理重写会在 26 秒后超时，而本项目的对话走 SSE 长连接，
+#       很容易被截断；直接由前端跨域请求 Render（config.js 的 apiBase）更稳定。
+# 如果你的网络环境无法直连 Render，可以打开下面这段（记得把域名换成自己的）：
+# [[redirects]]
+#   from = "/api/*"
+#   to = "https://mood-capsule-api.onrender.com/api/:splat"
+#   status = 200
+#   force = true
+# ------------------------------------------------------------
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "SAMEORIGIN"
+
+# 前端三个资源改完即生效，避免 CDN 缓存旧版本导致「改代码没反应」
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/config.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

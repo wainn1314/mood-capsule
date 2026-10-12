@@ -1,6 +1,7 @@
 /* ============================================================
  * Mood Capsule 前端逻辑（与 server.js / index.html / capsule.js 配套）
- * 数据读写与 AI 调用全部经由本地后端，前端不持有任何 API Key：
+ * 数据读写与 AI 调用全部经由后端 server.js（默认同源相对路径；前后端分开部署时由 config.js 指定地址），
+ * 前端不持有任何 API Key：
  *   对话      POST /api/dify/chat-messages              （Dify 流式 SSE 透传）
  *   开场白    GET  /api/dify/parameters
  *   情绪总结  GET  /api/dify/conversations/:id/variables
@@ -12,7 +13,9 @@
 'use strict';
 
 /* ---------- 配置 ---------- */
-const API_BASE = '';                     // 与本地后端同源，使用相对路径
+// 后端地址：本地同源时留空；前端独立部署（如 Netlify）时在 config.js 里填 Render 后端地址
+const RUNTIME_CONFIG = (typeof window !== 'undefined' && window.MOOD_CAPSULE_CONFIG) ? window.MOOD_CAPSULE_CONFIG : {};
+const API_BASE = String(RUNTIME_CONFIG.apiBase || '').replace(/\/+$/, ''); // 去掉末尾斜杠，避免出现双斜杠
 const USER_KEY = 'mood-capsule-user-id'; // 保持 Dify 会话连续
 const DEFAULT_OPENING = '你好呀，我是你的情绪树洞 Mood Capsule～想和我聊聊什么？';
 const END_QUERY = '我聊完啦，想结束这次对话，和你说声再见～';
@@ -179,7 +182,7 @@ async function loadSessions() {
     state.sessions = Array.isArray(list) ? list : [];
   } catch (e) {
     state.sessions = [];
-    showToast('历史对话读取失败，请确认本地服务已启动');
+    showToast('历史对话读取失败，请确认后端服务已启动（云端请检查 config.js 的 apiBase）');
   }
 }
 
@@ -193,7 +196,7 @@ async function loadCapsules() {
     state.capsules = Array.isArray(list) ? list : [];
   } catch (e) {
     state.capsules = [];
-    showToast('情绪胶囊读取失败，请确认本地服务已启动');
+    showToast('情绪胶囊读取失败，请确认后端服务已启动（云端请检查 config.js 的 apiBase）');
   }
 }
 
@@ -994,6 +997,12 @@ function bindEvents() {
 }
 
 /* ---------- 初始化 ---------- */
+// 是否处于「前端与后端同源」的场景（本地开发 / 自托管同源部署）
+function isLocalOrigin() {
+  const h = (typeof location !== 'undefined' && location.hostname) || '';
+  return h === '' || h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+}
+
 async function init() {
   bindEvents();
   els.colorInput.value = state.selectedColor;
@@ -1001,6 +1010,10 @@ async function init() {
   renderHistory();
   renderCapsules();
   showView('historyView');
+  if (!API_BASE && !isLocalOrigin()) {
+    console.warn('[Mood Capsule] 未配置后端地址：请在 config.js 中把 apiBase 指向后端服务（详见 DEPLOY.md）');
+    showToast('未配置后端地址：请在 config.js 填写后端地址');
+  }
 }
 
 if (document.readyState === 'loading') {

@@ -1,0 +1,35 @@
+# ============================================================
+# Render Blueprint（后端：Web Service）
+# 用法：Render Dashboard → New + → Blueprint → 选择本仓库，Render 会自动读取本文件
+# 若手动创建 Web Service，也可照抄下面的字段填进表单
+# 架构：前端静态资源在 Netlify，这里只跑 API（server.js）
+# ============================================================
+services:
+  - type: web
+    name: mood-capsule-api
+    runtime: node
+    plan: free                 # 免费实例：15 分钟无流量会休眠（冷启动约 1 分钟），且本地磁盘每次重启都会清空
+    branch: main
+    region: singapore          # 可选：oregon / ohio / virginia / frankfurt；按访问人群就近选择
+    buildCommand: npm install  # 本项目零第三方依赖，这一步只是让 Render 完成标准构建流程
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      # 下面三项在创建 Blueprint 时由 Render 提示你手动填写（不写进仓库，避免泄露）
+      - key: DIFY_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false            # 填 Netlify 站点地址，如 https://mood-capsule.netlify.app
+      - key: NODE_VERSION
+        value: "24.21.0"       # node:sqlite 需要 >= 22.13（免 --experimental-sqlite 标志）
+
+    # ------------------------------------------------------------
+    # 可选：持久化 SQLite 数据（需要付费实例，免费实例不支持挂载磁盘）
+    # 挂载后还要在上面 envVars 里加一项 DATA_DIR=/var/data，否则数据库仍写在临时磁盘上
+    # ------------------------------------------------------------
+    # disk:
+    #   name: mood-capsule-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
