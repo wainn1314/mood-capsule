@@ -49,7 +49,8 @@ node server.js
 Invoke-RestMethod http://127.0.0.1:8000/healthz | ConvertTo-Json -Depth 4
 ```
 
-启动日志应显示 `监听：http://127.0.0.1:8000`（本地不会出现「云平台模式」字样）。
+启动日志应显示 `监听：http://127.0.0.1:8000（仅本机可访问）`，并额外打印 `.env` 实际路径与「配置来源」一行
+（形如 `配置来源：PORT=8000 [默认值]、HOST=127.0.0.1 [默认值]…`）——**以后「改了 `.env` 不生效」看这两行就能定位**。
 浏览器打开 <http://127.0.0.1:8000>，确认能对话、能生成胶囊。**这一步通过再往下走。**
 
 > 也可以直接用验收脚本跑本地：`powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api http://127.0.0.1:8000`
@@ -237,6 +238,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api htt
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 控制台报 `blocked by CORS policy` | `CORS_ORIGIN` 没包含当前前端域名（必须是带 `https://` 的完整域名、不能带路径） | 补全后重启 Render 服务 |
+| **改了 `.env` 的 `PORT` / `HOST`，重启后仍监听 `127.0.0.1:8000`** | ① 服务器上是**旧版 `server.js`**（旧版把端口硬编码为 `const PORT = 8000;`，完全不读 `.env`）；② `.env` 没被读到；③ shell / PM2 里残留了同名变量——**系统环境变量优先级高于 `.env`** | 看启动日志的 `.env：` 与 `配置来源：` 两行：显示 `未加载` = 没读到；显示 `[系统环境变量，覆盖 .env]` = 被残留变量盖掉了。两行都正常却还不对 → 代码太旧，`git pull` 后重启（见 §12） |
+| `pm2 status` 是 `online`，但端口没有监听、`curl` 被拒 | 监听还没建立就退出了（端口被占用 / 权限不足 / `HOST` 填了公网 IP），PM2 会以极短间隔反复重启，看起来「在线」实则连不上 | 看 `pm2 logs <进程名> --lines 50`：`server.js` 会打印 `[启动失败] 无法监听 0.0.0.0:8123 —— listen EADDRINUSE / EACCES / EADDRNOTAVAIL` 与对应处理建议 |
+| `curl http://localhost:8123/health` 返回 `404` | 健康检查路径是 `/healthz`（`/health`、`/api/health` 是等价别名；**旧版代码没有这个端点**） | 改用 `/healthz`，或升级到最新代码后重启 |
+| 服务器上 `curl` 正常，但局域网 / 公网访问不通 | ① 只监听了回环地址；② 阿里云安全组没放行端口；③ 系统防火墙未放行 | 确认日志里是 `监听：http://0.0.0.0:8123（对外监听）`；再到安全组放行 TCP 8123（或加 nginx 反代，见 §12） |
 | 页面提示「未配置后端地址」 | `config.js` 的 `apiBase` 仍为空，且当前不在 localhost | 按 §6.1 填好并推送 |
 | 接口返回 `503`「未配置 DIFY_API_KEY / DEEPSEEK_API_KEY。请在托管平台的 Environment 面板中补齐该变量后重新部署」 | Render 环境变量缺失或拼错 | 补齐后重新部署 |
 | 访问 `https://xxx.onrender.com/mood.db` 或 `/.env` 返回 `403` | 内置拦截：数据库、点文件不通过 HTTP 暴露 | 属正常保护，无需处理 |
@@ -283,12 +288,126 @@ git add . ; git commit -m "feat: xxx" ; git push origin main
 |---|---|
 | 前端平台 | Netlify（`publish = "."`，无构建，配置文件 `netlify.toml`） |
 | 后端平台 | Render Web Service（`runtime: node`，`node server.js`，配置见 `render.yaml`） |
-| 后端健康检查 | `GET /healthz`（返回 Key 是否配置、数据目录、CORS 模式） |
+| 后端健康检查 | `GET /healthz`（等价别名 `/health`、`/api/health`；返回实际监听的 `host:port`、Key 是否配置、数据目录、CORS 模式、已加载的 `.env` 路径） |
 | 前端指向后端 | `config.js` → `window.MOOD_CAPSULE_CONFIG.apiBase` |
 | 跨域白名单 | Render 环境变量 `CORS_ORIGIN`（逗号分隔多个域名；不设置等于 `*`） |
 | 数据目录 | Render 环境变量 `DATA_DIR`（默认与 `server.js` 同目录） |
 | 端口/监听 | 平台注入 `PORT` 时自动监听 `0.0.0.0`；本地固定 `127.0.0.1:8000` |
 | 密钥 | 仅存于 Render 环境变量：`DIFY_API_KEY` / `DEEPSEEK_API_KEY` |
 | 一键验收 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api <后端地址> -Site <前端地址>`（退出码 0 = HTTP 层全过） |
+
+---
+
+## 12. 自建服务器（阿里云 Ubuntu + PM2，可选方案）
+
+> 不想用 Netlify / Render 时，可以把前后端都跑在一台云服务器上：**同源，连 `CORS_ORIGIN` 都不用配**。
+
+### 12.1 准备 Node 与代码
+
+```bash
+# Node.js ≥ 22.13（node:sqlite 免 --experimental-sqlite 的前提；本机在 v24.21.0 实测通过）
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node -v                       # 应 ≥ v22.13
+
+sudo npm i -g pm2
+
+git clone <你的仓库地址> /root/mood-capsule
+cd /root/mood-capsule
+cp .env.example .env
+vim .env                      # 填 DIFY_API_KEY / DEEPSEEK_API_KEY；自建服务器再放开下面两行
+# PORT=8123
+# HOST=0.0.0.0
+```
+
+> 项目零依赖，**不需要 `npm install`**（仓库里的 `package.json` 只声明 `engines` 与 `start` 脚本）。
+
+### 12.2 用仓库里的 PM2 配置启动
+
+```bash
+cd /root/mood-capsule
+pm2 delete mood-capsule-api        # 先清掉旧定义：旧的 cwd / env 会残留在 PM2 里
+pm2 start ecosystem.config.js      # 读仓库里的 ecosystem.config.js（fork、单实例、cwd = 项目根目录）
+pm2 save                           # 保存进程列表
+pm2 startup                        # 按提示执行它输出的那行 sudo 命令 → 开机自启
+```
+
+启动日志（`pm2 logs mood-capsule-api --lines 50`）里应看到这三行：
+
+```
+  监听：http://0.0.0.0:8123（对外监听）
+  .env：/root/mood-capsule/.env
+  配置来源：PORT=8123 [.env 文件]、HOST=0.0.0.0 [.env 文件]、DATA_DIR=/root/mood-capsule [默认值]、CORS_ORIGIN=* [默认值]
+```
+
+逐条验证：
+
+```bash
+ss -tlnp | grep :8123                  # 期望 0.0.0.0:8123 LISTENING（显示 127.0.0.1:8123 说明 HOST 没生效）
+curl -s http://127.0.0.1:8123/healthz  # 期望 ok:true、aiKeys 两项 true，且能看到 listen.host / listen.port / envFile
+```
+
+> 改完 `.env` 要重启才生效：`pm2 restart mood-capsule-api --update-env`。
+> **别把 `PORT` / `HOST` 同时写进 PM2 的 `env` 段或 shell 变量**：系统环境变量优先级高于 `.env`，两边都写迟早对不上（启动日志的「配置来源」会直接指出来）。
+
+### 12.3 对外访问：安全组 + 可选 nginx
+
+1. 阿里云控制台 → 该 ECS 实例的**安全组** → 入方向 → 放行 `TCP 8123`
+2. 系统防火墙（若开启）：`sudo ufw allow 8123/tcp`，或 `sudo firewall-cmd --add-port=8123/tcp --permanent && sudo firewall-cmd --reload`
+3. 浏览器打开 `http://<公网IP>:8123` 就是应用（**前后端同源**，`config.js` 的 `apiBase` 留空即可，也不用配 `CORS_ORIGIN`）
+
+想上域名 + HTTPS，就在前面加一层 nginx（**打字机效果靠 SSE，必须关缓冲、放大读超时**）：
+
+```nginx
+# /etc/nginx/sites-available/mood-capsule
+server {
+  listen 80;
+  server_name your-domain.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:8123;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+
+    proxy_buffering off;      # ← SSE 必需：不关缓冲，回复会整段蹦出而不是逐字出现
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+  }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/mood-capsule /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com     # 自动签发证书并配好 HTTPS
+```
+
+> 加了 nginx 之后本地端口可以只绑回环（`.env` 写 `HOST=127.0.0.1`），更安全。
+
+### 12.4 数据存放与备份
+
+- 默认 `mood.db` 就在 `/root/mood-capsule/` 下（WAL 模式，会另外生成 `mood.db-wal` / `mood.db-shm`）
+- 想集中管理数据：`.env` 里加 `DATA_DIR=/root/mood-capsule/data`（目录不存在会自动创建），重启生效
+- 备份就是拷走这三个文件：`cp mood.db* /root/backup/`（先 `pm2 stop mood-capsule-api` 更稳）
+
+### 12.5 日常更新
+
+```bash
+cd /root/mood-capsule
+git pull
+pm2 restart mood-capsule-api --update-env
+```
+
+### 12.6 排查速查（对应 §8 里那几条「连不上 / 改了不生效」的现象）
+
+| 命令 | 看什么 |
+|---|---|
+| `pm2 logs mood-capsule-api --lines 50` | 「监听 / .env / 配置来源」三行，以及 `[启动失败]` 的具体原因 |
+| `pm2 describe mood-capsule-api` | `exec mode`（必须是 fork）、`script path`、`cwd`、PM2 注入的环境变量 |
+| `ss -tlnp \| grep :8123` | 监听在 `0.0.0.0` 还是 `127.0.0.1`，以及是哪个 PID 在听 |
+| `curl -s http://127.0.0.1:8123/healthz` | `ok` / `aiKeys` / `listen` / `envFile` 一次看全 |
+| `grep -n "PORT" server.js` | 代码版本是否最新（旧版是 `const PORT = 8000;` 硬编码，`.env` 怎么写都没用） |
 
 

@@ -79,13 +79,16 @@
 
 完整步骤、免费额度限制（休眠 / 数据不持久）与排错清单见 **[`DEPLOY.md`](./DEPLOY.md)**。
 
+> 也可以把前后端都放到自己的云服务器（阿里云 Ubuntu + PM2 + nginx，**同源、不用配 CORS**）：
+> `DEPLOY.md` §12 有从装 Node、配 `.env`、开机自启到「端口连不上」排查的完整命令。
+
 ---
 
 ## 接口一览
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| GET | `/healthz` | 健康检查 / 部署自测（返回数据库路径、Key 是否已配置、CORS 模式） |
+| GET | `/healthz` | 健康检查 / 部署自测（等价别名 `/health`、`/api/health`；返回实际监听的 `host:port`、数据库路径、Key 是否已配置、CORS 模式、已加载的 `.env` 路径） |
 | GET | `/api/sessions` | 读取全部会话 |
 | PUT | `/api/sessions` | 覆盖写入会话数组 |
 | GET | `/api/capsules` | 读取全部情绪胶囊 |
@@ -111,6 +114,7 @@
 ├─ server.js                  后端：静态服务 + SQLite 数据层 + AI 反向代理 + 健康检查
 ├─ start_server.bat           Windows 一键启动
 ├─ verify_deploy.ps1          上线后一键验收：健康检查 / CORS 白名单 / 静态拦截 / apiBase 回填
+├─ ecosystem.config.js        PM2 配置（自建服务器用：锁定 cwd、单实例 fork，避免端口与 .env 打架）
 ├─ package.json               仅声明 engines 与 start 脚本（零依赖，供 Render 识别）
 ├─ netlify.toml               Netlify 部署配置（publish = "."，无构建）
 ├─ render.yaml                Render Blueprint（Web Service 定义）

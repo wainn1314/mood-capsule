@@ -9,7 +9,7 @@
  *    GET  /api/dify/parameters    -> Dify 开场白
  *    GET  /api/dify/conversations/:id/variables -> Dify 会话变量
  *    POST /api/deepseek/chat/completions -> DeepSeek 胶囊设计
- *    GET  /healthz                    -> 健康检查（托管平台的 health check 用）
+ *    GET  /healthz                    -> 健康检查（别名 /health、/api/health；托管平台探活 / 自建服务器自测用）
  * 配置：复制 .env.example 为 .env 并填入 DIFY_API_KEY / DEEPSEEK_API_KEY（.env 已被 .gitignore 忽略）
  * 可选：PORT / HOST / DATA_DIR / CORS_ORIGIN（分开部署时用 CORS_ORIGIN 收紧跨域白名单，见 DEPLOY.md）
  */
@@ -24,28 +24,56 @@ const BASE_DIR = __dirname;
 const ENV_PATH = path.join(BASE_DIR, '.env');
 
 // ---- 加载 .env（零第三方依赖：Node >= 20.12 自带 process.loadEnvFile） ----
-// 优先级：已存在的系统环境变量 > .env 文件（loadEnvFile 不会覆盖已有变量）
+// 优先级：已存在的系统环境变量 > .env 文件（loadEnvFile 不会覆盖已有变量）。
+// 反过来说：若 shell / PM2 / systemd 里残留了 PORT、HOST 等变量，.env 会被「静默忽略」，
+// 所以这里先快照一份启动前的系统环境变量，启动日志会标出每一项配置的真实来源（排错用）。
+const SYS_ENV = Object.assign({}, process.env);
+let ENV_FILE_USED = ''; // 实际加载到的 .env 绝对路径；空串表示没有加载到任何 .env
 (function loadDotEnv() {
   if (typeof process.loadEnvFile !== 'function') {
-    console.warn('[提示] 当前 Node.js 不支持 process.loadEnvFile()，已跳过 .env 加载；'
-      + '请先在系统环境变量中配置 API Key 再启动。');
+    console.warn('[提示] 当前 Node.js（%s）不支持 process.loadEnvFile()，已跳过 .env 加载；'
+      + '请改用系统环境变量，或升级到 Node >= 20.12。', process.version);
     return;
   }
-  if (!fs.existsSync(ENV_PATH)) {
-    console.warn('[提示] 未找到 .env 文件（%s），将只读取系统环境变量。', ENV_PATH);
+  // 依次尝试 server.js 所在目录、当前工作目录（PM2 / systemd 的启动目录不一定等于脚本目录）
+  const candidates = [ENV_PATH];
+  const cwdEnv = path.join(process.cwd(), '.env');
+  if (cwdEnv !== ENV_PATH) candidates.push(cwdEnv);
+  const found = candidates.filter((p) => fs.existsSync(p));
+  if (found.length === 0) {
+    console.warn('[提示] 未找到 .env 文件（已尝试：%s），将只读取系统环境变量。', candidates.join(' / '));
     return;
   }
   try {
-    process.loadEnvFile(ENV_PATH);
+    process.loadEnvFile(found[0]);
+    ENV_FILE_USED = found[0];
   } catch (e) {
-    console.warn('[提示] .env 解析失败：%s', e && e.message ? e.message : e);
+    console.warn('[提示] .env 解析失败（%s）：%s', found[0], e && e.message ? e.message : e);
   }
 })();
 
-// ---- 运行时配置：本地开箱即用，云端由环境变量覆盖 ----
-const IS_CLOUD = !!process.env.PORT;  // 托管平台（Render / Railway 等）会自动注入 PORT
-const HOST = process.env.HOST || (IS_CLOUD ? '0.0.0.0' : '127.0.0.1'); // 本地仍只绑回环，不对外网暴露
-const PORT = Number(process.env.PORT) || 8000;
+// 某个配置项的值来自哪里：系统环境变量 / .env 文件 / 代码默认值（启动日志与排错用）
+function envSource(name) {
+  if (SYS_ENV[name] !== undefined && SYS_ENV[name] !== '') return '系统环境变量，覆盖 .env';
+  if (process.env[name] !== undefined && process.env[name] !== '') return '.env 文件';
+  return '默认值';
+}
+
+// ---- 运行时配置：本地开箱即用，云端 / 自建服务器由环境变量或 .env 覆盖 ----
+const IS_CLOUD = !!process.env.PORT;  // 托管平台（Render / Railway 等）会自动注入 PORT；自建服务器在 .env 里写 PORT 同样走这条
+const HOST = (process.env.HOST || '').trim() || (IS_CLOUD ? '0.0.0.0' : '127.0.0.1'); // 本地默认只绑回环，不对外网暴露
+const RAW_PORT = (process.env.PORT || '').trim();
+const PORT = Number(RAW_PORT) || 8000;
+// 是否对外网可访问：HOST 不是回环地址即为「对外监听」（决定要不要打印安全 / 数据提示）
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
+const IS_PUBLIC = LOOPBACK_HOSTS.indexOf(HOST) === -1;
+// 托管平台探测：平台会注入自己的标识变量（Render / Railway / Heroku / Fly.io）。
+// 注意 IS_CLOUD 只代表「有 PORT」，自建服务器在 .env 里写 PORT 同样为 true，
+// 因此「磁盘临时、数据会丢」的口径必须按 IS_MANAGED 判断，否则会在自建服务器上误报。
+const PLATFORM = process.env.RENDER ? 'Render'
+  : (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID ? 'Railway'
+    : (process.env.DYNO ? 'Heroku' : (process.env.FLY_APP_NAME ? 'Fly.io' : '')));
+const IS_MANAGED = !!PLATFORM;
 // 数据目录：默认与 server.js 同级；挂载了持久化磁盘时指向挂载点（如 DATA_DIR=/var/data）
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : BASE_DIR;
 const DB_PATH = path.join(DATA_DIR, 'mood.db');
@@ -86,9 +114,9 @@ function missingApiKeys() {
 }
 
 const MISSING_KEYS = missingApiKeys();
-// 提示语随运行模式切换：本地改 .env，云端只能改托管平台的环境变量面板
-const KEY_HINT = IS_CLOUD
-  ? '请在托管平台（Render 等）的 Environment 面板中补齐该变量后重新部署'
+// 提示语随运行模式切换：本地指向 .env，对外部署指向环境变量 / 托管平台面板
+const KEY_HINT = IS_PUBLIC
+  ? '请在运行环境的环境变量里补齐（自建服务器写 .env，或 PM2 / systemd 的 env；托管平台在 Environment 面板配置）后重启服务'
   : '请在项目根目录新建 .env（可复制 .env.example）并填入对应变量值后重启服务';
 
 const MIME_TYPES = {
@@ -389,14 +417,17 @@ function handleRequest(req, res) {
   }
   if (req.method === 'POST' && pathname === '/api/deepseek/chat/completions') return proxyDeepSeek(req, res);
 
-  // 健康检查（托管平台 health check / 部署后自测用）
-  if (req.method === 'GET' && (pathname === '/healthz' || pathname === '/api/health')) {
+  // 健康检查（托管平台 health check / 部署后就地自测用；/health 是等价别名，方便 curl）
+  if (req.method === 'GET'
+    && (pathname === '/healthz' || pathname === '/health' || pathname === '/api/health')) {
     return sendJson(res, 200, {
       ok: true,
       service: 'mood-capsule',
       database: { path: DB_PATH, ready: fs.existsSync(DB_PATH) },
       aiKeys: { dify: !!DIFY_API_KEY, deepseek: !!DEEPSEEK_API_KEY },
       corsOrigin: RAW_CORS_ORIGIN,
+      listen: { host: HOST, port: PORT, public: IS_PUBLIC },
+      envFile: ENV_FILE_USED || null,
       uptime: Math.round(process.uptime()),
       node: process.version,
       time: new Date().toISOString(),
@@ -430,26 +461,56 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// 监听失败时给出人话原因（否则 PM2 只会看到一串堆栈，甚至表现为「online 但连不上」）
+server.on('error', (err) => {
+  const code = (err && err.code) || '';
+  console.error('  [启动失败] 无法监听 %s:%d —— %s', HOST, PORT, (err && err.message) || err);
+  if (code === 'EADDRINUSE') {
+    console.error('  [原因] 端口 %d 已被占用：多为上一个进程没退出，或 PM2 用 cluster 模式（-i max）起了多份实例。', PORT);
+    console.error('  [处理] 查占用：ss -tlnp | grep :%d ；PM2 改为单实例：pm2 delete mood-capsule-api && pm2 start ecosystem.config.js', PORT);
+  } else if (code === 'EACCES') {
+    console.error('  [原因] 没有绑定该端口的权限（Linux 上 < 1024 的端口需要 root 或 CAP_NET_BIND_SERVICE）。');
+    console.error('  [处理] 换成 1024 以上的端口（例如 8123），或用 nginx 反向代理到高位端口。');
+  } else if (code === 'EADDRNOTAVAIL') {
+    console.error('  [原因] HOST=%s 不是本机网卡上的地址。', HOST);
+    console.error('  [处理] 对外提供服务填 HOST=0.0.0.0；只给本机用填 HOST=127.0.0.1（不要填公网 IP / 域名）。');
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   console.log('='.repeat(52));
-  console.log('  Mood Capsule 后端已启动（Node.js %s）', process.version);
-  console.log('  监听：http://%s:%d%s', HOST, PORT, IS_CLOUD ? '（云平台模式）' : '');
+  console.log('  Mood Capsule 后端已启动（Node.js %s，PID %d）', process.version, process.pid);
+  console.log('  监听：http://%s:%d%s', HOST, PORT, IS_PUBLIC ? '（对外监听）' : '（仅本机可访问）');
+  console.log('  运行环境：%s', IS_MANAGED ? '托管平台 ' + PLATFORM : (IS_PUBLIC ? '自建服务器 / 容器' : '本机'));
   console.log('  数据库文件：%s', DB_PATH);
   console.log('  CORS：%s', ALLOWED_ORIGINS ? ALLOWED_ORIGINS.join(' / ') : '*（默认放开）');
+  // ↓ 这两行专治「.env 改了不生效」：能直接看出 .env 有没有读到、有没有被系统环境变量盖掉
+  console.log('  .env：%s', ENV_FILE_USED || '未加载（使用系统环境变量 / 默认值）');
+  console.log('  配置来源：PORT=%d [%s]、HOST=%s [%s]、DATA_DIR=%s [%s]、CORS_ORIGIN=%s [%s]',
+    PORT, envSource('PORT'), HOST, envSource('HOST'),
+    DATA_DIR, envSource('DATA_DIR'), RAW_CORS_ORIGIN, envSource('CORS_ORIGIN'));
+  if (RAW_PORT && String(PORT) !== RAW_PORT) {
+    console.warn('  [警告] PORT=%s 不是合法端口号，已回退为 %d', RAW_PORT, PORT);
+  }
   if (MISSING_KEYS.length > 0) {
     console.warn('  [警告] 缺少环境变量：%s', MISSING_KEYS.join(' / '));
-    console.warn('         %s', IS_CLOUD ? '请在托管平台的环境变量面板中配置后重新部署' : KEY_HINT);
+    console.warn('         %s', KEY_HINT);
   }
-  if (IS_CLOUD) {
+  if (IS_PUBLIC) {
     if (!ALLOWED_ORIGINS) {
       console.warn('  [安全提示] 已公网暴露且未设置 CORS_ORIGIN：任何网站都可调用本接口消耗你的 AI 额度，');
       console.warn('             建议把 CORS_ORIGIN 设为前端域名，例如 https://xxx.netlify.app');
     }
-    if (DATA_DIR === BASE_DIR) {
-      console.warn('  [数据提示] 未设置 DATA_DIR：云平台的本地磁盘是临时的，重新部署/重启/休眠后 mood.db 会丢失；');
-      console.warn('             需要长期保存请挂载持久化磁盘并把 DATA_DIR 指向挂载点（详见 DEPLOY.md）');
+    if (!IS_MANAGED) {
+      console.log('  [提示] 自建 / 容器环境：数据文件请自行备份（cp mood.db*），并只在安全组放行必要端口（详见 DEPLOY.md §12）');
     }
-  } else {
+  }
+  if (IS_MANAGED && DATA_DIR === BASE_DIR) {
+    console.warn('  [数据提示] 未设置 DATA_DIR：云平台（如 Render 免费实例）的本地磁盘是临时的，重新部署/重启/休眠后 mood.db 会丢失；');
+    console.warn('             需要长期保存请挂载持久化磁盘并把 DATA_DIR 指向挂载点（详见 DEPLOY.md）');
+  }
+  if (!IS_PUBLIC) {
     console.log('  按 Ctrl+C 停止服务');
   }
   console.log('='.repeat(52));

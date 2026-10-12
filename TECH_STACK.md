@@ -1,9 +1,10 @@
 # Mood Capsule · 技术栈说明
 
-> **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`config.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`verify_deploy.ps1`、`package.json`、`netlify.toml`、`render.yaml`、`DEPLOY.md`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
+> **文档依据**：对项目目录内全部源码（`app.js`、`capsule.js`、`config.js`、`index.html`、`styles.css`、`server.js`、`mood-capsule-chatflow.yaml`、`start_server.bat`、`verify_deploy.ps1`、`ecosystem.config.js`、`package.json`、`netlify.toml`、`render.yaml`、`DEPLOY.md`、`mood.db`）逐文件通读，并对本机运行环境做了实测验证。
 > **实测环境**：Windows / Node.js **v24.21.0** / npm 11.19.0。已验证 `require('node:sqlite')` 可直接使用，**无需任何启动参数**。
-> **更新日期**：2026-10-12（新增：前后端分离部署支持 —— `config.js` 运行时后端地址 + `CORS_ORIGIN` 白名单 + `/healthz` 健康检查；新增上线验收脚本 `verify_deploy.ps1`，详见 [`DEPLOY.md`](./DEPLOY.md) §7）
-> 前次更新：2026-10-09（新增：密钥外置到 `.env` + `.gitignore`，详见第 8.1 节）
+> **更新日期**：2026-10-12（本次：启动配置可观测性 + 自建服务器支持 —— `PORT`/`HOST` 可由 `.env` 覆盖、启动日志打印「`.env` 路径 + 每项配置来源」、`/healthz` 增加 `/health` 等价别名并返回 `listen` 与 `envFile`、`server.listen` 增加可读错误处理（EADDRINUSE / EACCES / EADDRNOTAVAIL）、新增 PM2 配置 `ecosystem.config.js`，详见 [`DEPLOY.md`](./DEPLOY.md) §12）
+> 前次更新：2026-10-12（前后端分离部署支持 —— `config.js` 运行时后端地址 + `CORS_ORIGIN` 白名单 + `/healthz` 健康检查；上线验收脚本 `verify_deploy.ps1`，详见 §7）
+> 更早更新：2026-10-09（密钥外置到 `.env` + `.gitignore`，详见第 8.1 节）
 
 ---
 
@@ -24,7 +25,7 @@
 | 大模型 | DeepSeek（provider `deepseek`） | 工作流节点用 `deepseek-v4-flash`；外观设计直连 `deepseek-chat` |
 | 依赖管理 | **零第三方依赖**（`package.json` 只声明 `engines` 与 `start`，无 `dependencies`） | 无需 `npm install` 即可运行 |
 | 运行时依赖 | Node.js **≥ 22.13**（`node:sqlite` 免 `--experimental-sqlite` 的最低版本） | 本机 24.21.0 |
-| 云部署 | 前端 Netlify（静态）+ 后端 Render（Node） | 见 `netlify.toml` / `render.yaml` / [`DEPLOY.md`](./DEPLOY.md) |
+| 云部署 | 前端 Netlify（静态）+ 后端 Render（Node）；也可两台合一的**自建服务器**（PM2 + nginx） | 见 `netlify.toml` / `render.yaml` / [`DEPLOY.md`](./DEPLOY.md)（§12 自建方案） |
 
 ---
 
@@ -41,10 +42,11 @@
         │  fetch：API_BASE + 路径（本地 API_BASE='' 走同源相对路径）——前端不持有任何 API Key
         ▼
 后端 server.js  13.4 KB   ← 零第三方依赖，仅 Node 内置模块
-├─ .env 加载        process.loadEnvFile()（Node ≥ 20.12，无第三方 dotenv）
+├─ .env 加载        process.loadEnvFile()（Node ≥ 20.12，无第三方 dotenv；脚本目录 → cwd 依次尝试）
+├─ PORT / HOST     监听配置（环境变量或 .env；启动日志打印「.env 路径 + 每项配置来源」）
 ├─ node:http      静态文件服务（拦截 .env / mood.db）+ 路由 + CORS 白名单
 ├─ node:sqlite    持久化 mood.db（WAL 模式，内置驱动，目录由 DATA_DIR 决定）
-├─ /healthz       健康检查（平台探活用：返回 Key / 数据目录 / CORS 模式）
+├─ /healthz       健康检查（等价别名 /health、/api/health；返回 listen.host/port、envFile、Key、数据目录、CORS 模式）
 └─ node:https     反向代理（仅在此处注入 API Key）
         │
         ├─► https://api.dify.ai/v1        Dify 工作流：意图识别 / 共情对话 / 情绪总结
@@ -55,17 +57,23 @@
 
 ### 1.1 两种部署形态
 
-| | 本地运行（默认） | 线上分离部署 |
-|---|---|---|
-| 静态前端 + 后端 | 同一个进程，同源 | Netlify（前端）/ Render（后端），跨域 |
-| 监听地址 | `127.0.0.1:8000`（只绑回环） | 平台注入 `PORT` → 自动监听 `0.0.0.0`（`IS_CLOUD` 分支） |
-| 跨域 | 无需（同源） | `CORS_ORIGIN` 白名单，由 `res.writeHead` 包装统一注入 |
-| 前端后端地址 | `config.js` 留空，走相对路径 | `config.js` 填 Render 地址 |
-| 数据 | 项目目录 `mood.db` | 同一路径，但平台磁盘临时；持久化需 `DATA_DIR` + 挂载磁盘 |
-| 版本要求 | Node ≥ 22.13 | `NODE_VERSION` 由平台指定（`render.yaml` 里为 24.21.0） |
+| | 本地运行（默认） | 线上分离部署 | 自建服务器（同源，见 `DEPLOY.md` §12） |
+|---|---|---|---|
+| 静态前端 + 后端 | 同一个进程，同源 | Netlify（前端）/ Render（后端），跨域 | 同一个进程，同源（前面可再加 nginx） |
+| 监听地址 | `127.0.0.1:8000`（只绑回环） | 平台注入 `PORT` → 自动监听 `0.0.0.0` | `.env` 写 `PORT=8123` + `HOST=0.0.0.0` |
+| 跨域 | 无需（同源） | `CORS_ORIGIN` 白名单，由 `res.writeHead` 包装统一注入 | 无需（同源）；前端放别处时同样用 `CORS_ORIGIN` |
+| 前端后端地址 | `config.js` 留空，走相对路径 | `config.js` 填 Render 地址 | `config.js` 留空 |
+| 数据 | 项目目录 `mood.db` | 同一路径，但平台磁盘临时；持久化需 `DATA_DIR` + 挂载磁盘 | 项目目录或 `DATA_DIR`；`mood.db*` 自行备份 |
+| 版本要求 | Node ≥ 22.13 | `NODE_VERSION` 由平台指定（`render.yaml` 里为 24.21.0） | Node ≥ 22.13（本机 24.21.0 实测） |
+| 进程管理 | 手动 `node server.js` | 平台托管 | PM2（`ecosystem.config.js`：fork、单实例、锁定 `cwd`） |
 
 > 关键实现：`CORS_ORIGIN` 采用「按请求 Origin 计算 → 统一覆盖/删除响应头」的方式，
 > 因此 JSON 接口、SSE 透传、OPTIONS 预检三条路径的行为完全一致（`server.js` 中的 `corsHeadersFor()` + `res.writeHead` 包装）。
+> 配置可观测性：启动日志固定打印「监听 / `.env` 路径 / 配置来源」三行（每项标注 `系统环境变量，覆盖 .env` / `.env 文件` / `默认值`），
+> 运行时也可用 `GET /healthz` 的 `listen`、`envFile` 字段反查——专治「改了 `.env` 却不生效」。
+> `IS_PUBLIC`（HOST 非回环）决定是否打印「公网暴露未设 `CORS_ORIGIN`」安全提示；磁盘口径按 `IS_MANAGED` 区分：
+> 托管平台（由 `RENDER` / `RAILWAY_*` / `DYNO` / `FLY_APP_NAME` 探测）才提示「本地磁盘临时、数据会丢」，
+> 自建 / 容器环境则提示自行备份与安全组收敛（`IS_CLOUD` 只表示「有 `PORT` 注入」，不能用来区分平台与自建）。
 
 ---
 
@@ -401,9 +409,12 @@ toPercent(0-10 → 0-100) + recommendColors(emotionType) → openPreview()
 
 ### 8.5 【低】无鉴权 + 仅回环监听
 
-- 现状：`127.0.0.1:8000`，无 token；CORS 放开为 `*`；
+- 现状：默认 `127.0.0.1:8000`，无 token；未设 `CORS_ORIGIN` 时 CORS 放开为 `*`；
 - 影响：本机任意进程（含恶意网页通过本机请求）可调用 `/api/*`；风险可控但不严谨；
 - 建议：若将来要手机/局域网访问，需加简单 token 校验并显式提示暴露风险（当前刻意只绑回环，是有意的最小暴露设计）。
+- 对外部署时（平台注入 `PORT`，或 `.env` 写 `HOST=0.0.0.0`）会进入 `IS_PUBLIC`：**务必设置 `CORS_ORIGIN` 白名单**，
+  否则启动日志会打印安全提示，且任何网站都能白嫖你的模型额度；自建服务器还应在阿里云安全组只放行必要端口，
+  更稳妥的做法是只绑回环、由 nginx 提供 HTTPS（见 `DEPLOY.md` §12.3）。
 
 ### 8.6 【低】缺少工程入口
 
@@ -423,39 +434,50 @@ toPercent(0-10 → 0-100) + recommendColors(emotionType) → openPreview()
 
 | 文件 | 大小 | 角色 | 运行时必需 |
 |---|---|---|---|
-| `app.js` | 34.8 KB | 前端业务逻辑：状态、渲染、SSE 流式、情绪总结、胶囊流程 | ✅ |
+| `app.js` | 35.8 KB | 前端业务逻辑：状态、渲染、SSE 流式、情绪总结、胶囊流程 | ✅ |
 | `capsule.js` | 22.2 KB | 前端纯 SVG 胶囊绘制引擎（`window.MoodCapsule`） | ✅ |
 | `index.html` | 8.9 KB | 页面骨架，5 个视图容器 | ✅ |
 | `styles.css` | 14.3 KB | 原生 CSS 主题与动画 | ✅ |
-| `server.js` | 13.4 KB | 后端：静态文件 + 数据 API + AI 代理（含 `.env` 加载） | ✅ |
-| `.env.example` | 1.1 KB | 环境变量模板（复制为 `.env` 后填 Key） | ➖ 首次配置 |
-| `.env` | 0.2 KB | 本机真实密钥，**已被 `.gitignore` 忽略** | ➖ 本机私有 |
-| `.gitignore` | 0.5 KB | 排除 `.env` / `mood.db*` / `*.log` / `node_modules/` | ➖ 版本控制 |
-| `README.md` | 4.8 KB | 仓库首页说明：功能、快速开始、接口、安全 | ➖ 文档 |
+| `config.js` | 0.9 KB | 运行时配置（`window.MOOD_CAPSULE_CONFIG.apiBase`）；跨域部署时填后端地址 | ✅ |
+| `server.js` | 21.4 KB | 后端：静态文件 + 数据 API + AI 代理 + `.env`/`PORT`/`HOST` 解析与启动自检日志 | ✅ |
+| `.env.example` | 1.8 KB | 环境变量模板（复制为 `.env` 后填 Key；可选覆盖端口 / 数据目录 / 跨域白名单） | ➖ 首次配置 |
+| `.env` | 0.2 KB | 本机真实密钥与端口配置，**已被 `.gitignore` 忽略** | ➖ 本机私有 |
+| `.gitignore` | 0.6 KB | 排除 `.env` / `mood.db*` / `*.log` / `node_modules/` | ➖ 版本控制 |
+| `README.md` | 8.1 KB | 仓库首页说明：功能、快速开始、接口、目录树、部署速览 | ➖ 文档 |
 | `start_server.bat` | 158 B | Windows 启动脚本（含 node 路径回退） | ➖ 便捷 |
+| `ecosystem.config.js` | 2.0 KB | PM2 配置（自建服务器：fork / 单实例 / 锁定 `cwd`，端口统一交给 `.env`） | ❌ |
 | `verify_deploy.ps1` | 11.8 KB | 上线验收脚本：健康检查 / CORS 白名单 / 敏感文件拦截 / `apiBase` 回填校验（零依赖，失败退出码 1） | ❌ |
-| `mood.db` / `-wal` / `-shm` | ~293 KB | SQLite 数据库（WAL 模式，自动生成，**已被忽略**） | ✅ 自动创建 |
+| `package.json` | 0.5 KB | 仅 `engines` + `start` / `check` 脚本（零依赖，供 Render 识别） | ❌ |
+| `netlify.toml` | 1.9 KB | 前端托管配置（`publish = "."`、无构建、敏感文件不外发） | ➖ Netlify |
+| `render.yaml` | 1.8 KB | 后端蓝图（`node server.js`、`/healthz` 探活、环境变量、可选持久磁盘片段） | ➖ Render |
+| `mood.db` / `-wal` / `-shm` | ~390 KB | SQLite 数据库（WAL 模式，自动生成，**已被忽略**） | ✅ 自动创建 |
 | `mood-capsule-chatflow.yaml` | 21.8 KB | Dify 工作流 DSL（云端编排的真源） | ➖ 云端必需 |
 | `emotion_capsule_svg.py` | 6.1 KB | Python 版 SVG 生成器（原型/参考实现） | ❌ |
 | `emotion_capsule.svg` | 2.0 KB | 早期样例产物 | ❌ |
+| `DEPLOY.md` | 21.2 KB | 部署文档：Netlify + Render（§1–§11）、排错表（§8）、**自建服务器 PM2 + nginx（§12）** | ➖ 文档 |
 | `AIPM面试讲解手册.md` | 49.7 KB | 产品视角讲解 / 面试准备手册 | ❌ |
-| `TECH_STACK.md` | 27.9 KB | 本文档，技术栈说明 | ❌ |
+| `TECH_STACK.md` | ~34.5 KB | 本文档，技术栈说明 | ❌ |
 
 ### 9.2 复现验证命令
 
 ```powershell
-# 1) 环境要求：Node.js >= 22.5（node:sqlite）
+# 1) 环境要求：Node.js >= 22.13（node:sqlite 免 --experimental-sqlite 的最低版本）
 node --version
 
-# 2) 语法检查（三个主文件）
+# 2) 语法检查（全部 JS 入口 + PM2 配置）
 cd "d:\ai-project\Mood Capsule"
-node --check server.js ; node --check app.js ; node --check capsule.js
+node --check server.js ; node --check app.js ; node --check capsule.js ; node --check config.js ; node --check ecosystem.config.js
+#   或直接： npm run check
 
 # 3) 首次运行：复制 .env.example 为 .env 并填入 DIFY_API_KEY / DEEPSEEK_API_KEY
 Copy-Item .env.example .env    # .env 已被 .gitignore 忽略
 
 # 4) 启动后端（或双击 start_server.bat），浏览器打开 http://127.0.0.1:8000
 node server.js
+#    启动日志请确认三行：监听：http://127.0.0.1:8000（仅本机可访问） / .env：… / 配置来源：PORT=8000 [默认值]…
+
+# 4.1) 另开一个窗口就地自检（/health 与 /healthz 等价，返回里能看到 listen.host / listen.port / envFile）
+curl.exe -s http://127.0.0.1:8000/healthz
 
 # 5) 开发用校验脚本（位于上级目录）
 cd d:\ai-project
@@ -466,6 +488,10 @@ node _mc_api_check.js   # 接口契约（需 server.js 正在运行；只读，�
 # 6) 上线验收（HTTP 层全自动；本地自测可用 -Api http://127.0.0.1:8000）
 cd "d:\ai-project\Mood Capsule"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_deploy.ps1 -Api https://xxx.onrender.com -Site https://xxx.netlify.app
+
+# 7) 自建服务器（Linux / 阿里云）常驻示例；日志里核对「监听 / .env / 配置来源」三行
+#    pm2 delete mood-capsule-api ; pm2 start ecosystem.config.js ; pm2 logs mood-capsule-api --lines 30
+#    连不上时依次看： ss -tlnp | grep :8123   →   pm2 logs mood-capsule-api --lines 50   →   curl -s http://127.0.0.1:8123/healthz
 ```
 
 ### 9.3 关键概念对照表
